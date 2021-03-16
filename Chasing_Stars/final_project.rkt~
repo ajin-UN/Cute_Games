@@ -1,0 +1,669 @@
+;; The first three lines of this file were inserted by DrRacket. They record metadata
+;; about the language level of this file in a form that our tools can easily process.
+#reader(lib "htdp-advanced-reader.ss" "lang")((modname final_project) (read-case-sensitive #t) (teachpacks ()) (htdp-settings #(#t constructor repeating-decimal #t #t none #f () #f)))
+(require 2htdp/image)
+(require 2htdp/universe)
+;A Star-world is
+; (make-sw Star Number [List-of Level])
+; interp: if 'sw' is a Star-world then all of:
+; - (sw-star sw) is a Star
+; - (sw-score sw) is a score
+; - (sw-levels sw) is a [list-of Level]
+
+(define-struct sw (rstar score levels))
+
+; A RStar is (make-rstar Posn Color)
+; interp: if "Rstar" is a RStar then all of:
+; - (rstar-posn rstar) is a posn
+; - (rstar-color rstar) is a string to represent the color
+
+(define-struct rstar (posn color direction))
+
+; A Monster is (make-monster Type Posn Life)
+; interp: if "monster" is a Monster then all of:
+; - (monster-type) is a Monster-type
+; - (monster-posn) is a posn
+; - (monster-life) is a Number
+
+(define-struct monster (type posn color))
+
+; A Treat is (make-treat color posn   )
+; interp: if "treat" is a Treat then all of:
+; - (treat-color) is a tring to represent the color
+; - (treat-posn) is a posn
+
+(define-struct treat (color posn))
+
+
+; A Level is (make-level [list-of posn] [list-of Treats] [list-of Monsters])
+; A Posn is (make-posn Real Real))
+; A Monster-type is a string represents the image of Monster
+
+(define-struct level (stairs treats monsters))
+
+(define WORLD-WIDTH 800)   ; window width
+(define WORLD-HEIGHT 150)  ; window height
+(define BACKGROUND (empty-scene WORLD-WIDTH WORLD-HEIGHT))
+(define STAIR-WIDTH 20)
+(define STAIR-HEIGHT 2)
+
+(define STAIR-IMAGE (rectangle STAIR-WIDTH STAIR-HEIGHT "solid" "black"))
+
+(define COLORS (list "OrangeRed" "Coral" "Gold" "Olive" "Lime" "SteelBlue"))
+
+(define VELOCITY-X 5)
+(define VELOCITY-Y 10)
+(define GRAVITY 0.5)
+  
+
+;make-stairs: Number Posn Number -> [List-of Posn]
+;return a list of points
+(define (make-stairs dir start-point num)
+  (cond
+    [(equal? num 0) '()]
+    [else (cons (make-posn (+ (posn-x start-point) 20) (+ (posn-y start-point) dir))
+                (make-stairs dir
+                             (make-posn (+ (posn-x start-point) 20) (+ (posn-y start-point) dir))
+                             (- num 1)))]))
+;test:
+(check-expect (make-stairs 10 (make-posn 0 0) 3)
+              (list (make-posn 20 10) (make-posn 40 20) (make-posn 60 30)))
+(check-expect (make-stairs -10 (make-posn 40 40) 2)
+              (list (make-posn 60 30) (make-posn 80 20)))
+
+;find-which-stair: sw -> posn
+;return a stair location of where is the star suppose to be
+(define (find-which-stair sw)
+  (cond
+    [(equal? (level-stairs (first (sw-levels sw))) '())
+     (make-posn 0 0)]
+    [else
+     (if (and (>= (posn-x (rstar-posn (sw-rstar sw)))
+                  (- (posn-x  (first (level-stairs (first (sw-levels sw))))) 10))
+              (<= (posn-x (rstar-posn (sw-rstar sw)))
+                  (+ (posn-x (first (level-stairs (first (sw-levels sw))))) 10)))              
+         (first(level-stairs (first (sw-levels sw))))
+         (find-which-stair (make-sw (sw-rstar sw)
+                                    (sw-score sw)
+                                    (cons (make-level (rest (level-stairs (first (sw-levels sw))))
+                                                      (level-treats (first (sw-levels sw)))
+                                                      (level-monsters (first (sw-levels sw))))
+                                          (rest (sw-levels sw))))))]))
+
+;test:
+(check-expect (find-which-stair STARTING-SW) (make-posn 20 140))
+(check-expect (find-which-stair (make-sw (make-rstar (make-posn 75 80) "red" "left")
+                                          0
+                                          (sw-levels STARTING-SW)))
+              (make-posn 80 130))
+;              
+;;on-stair?: sw -> bool
+;;returns a bool to check if the star is on the stair
+;(define (on-stair? sw)
+;  (and (<= (abs (- (posn-x (rstar-posn (sw-rstar sw)))
+;                  (posn-x (find-which-stair sw)))) 10)
+;       (< (abs (- (posn-y (rstar-posn (sw-rstar sw)))
+;                  (posn-y (find-which-stair sw)))) 5)))
+;;test:
+;(check-expect (on-stair? STARTING-SW) #t)
+;(check-expect (on-stair? (make-sw (make-rstar (make-posn 75 80) "red" "left")
+;                                          0
+;                                          (sw-levels STARTING-SW))) #f)
+
+;end-game?: sw -> bool
+;returns to see if the game end
+(define (end-game? sw)
+  (if (and (>= (posn-y (rstar-posn (sw-rstar sw))) WORLD-HEIGHT)
+           (equal? "falling" (rstar-direction (sw-rstar sw))))
+      #f
+      (if (or (>= (posn-x (rstar-posn (sw-rstar sw))) WORLD-WIDTH)
+              (<= (posn-y (rstar-posn (sw-rstar sw))) 0)
+              (>= (posn-y (rstar-posn (sw-rstar sw))) WORLD-HEIGHT))
+          #t
+          #f)))
+
+;test:
+(check-expect (end-game? (make-sw (make-rstar (make-posn 800 80) "red" "left")
+                                          0
+                                          (sw-levels STARTING-SW))) #t)
+(check-expect (end-game? (make-sw (make-rstar (make-posn 75 150) "red" "left")
+                                          0
+                                          (sw-levels STARTING-SW))) #t)
+(check-expect (end-game? (make-sw (make-rstar (make-posn 75 0) "red" "left")
+                                          0
+                                          (sw-levels STARTING-SW))) #t)
+
+(check-expect (end-game? STARTING-SW) #f)
+
+;make-level-one-stairs: [List-of Posn][List-of Posn][List-of Posn][List-of Posn]
+;                       [List-of Posn][List-of Posn][List-of Posn] -> [List-of Posn]
+;returns a list of posn for level one
+(define (make-level-one-stairs l1 l2 l3 l4 l5 l6 l7)
+  (append l1 l2 l3 l4 l5 l6 l7))
+;test
+(check-expect (make-level-one-stairs (list 1 2) (list 1 2) (list 1 2) (list 1 2) (list 1 2) (list 1 2)
+                                     (list 1 2))
+              (list 1 2 1 2 1 2 1 2 1 2 1 2 1 2))
+
+
+(define POSNS-A (make-stairs -10 (make-posn 0 150) 3))
+(define POSNS-B (make-stairs 10 (make-posn 60 120) 1))
+(define POSNS-C (make-stairs -10 (make-posn 80 130) 10))
+(define POSNS-D (make-stairs 10 (make-posn 280 30) 8))
+(define POSNS-E (make-stairs 0 (make-posn 440 110) 5))
+(define POSNS-F (make-stairs -10 (make-posn 540 110) 7))
+(define POSNS-G (make-stairs 10 (make-posn 680 40) 5))
+(define LEVEL-ONE-STAIRS (make-level-one-stairs POSNS-A POSNS-B POSNS-C POSNS-D POSNS-E POSNS-F POSNS-G))
+
+
+;make-treat-position: posn -> posn
+;returns a position of treat that aboves the given posn
+(define (make-treat-position a)
+  (make-posn (posn-x a)
+             (random (posn-y a))))
+
+;trim-list: [List-Of posn] -> [List-Of posn]
+;return a list of posns
+(define (trim-list ps)
+  (rest (rest (rest (rest ps)))))
+;test:
+(check-expect (trim-list (list (make-posn 1 1) (make-posn 2 2) (make-posn 3 3)
+                               (make-posn 4 4) (make-posn 5 5) (make-posn 6 6)))
+              (list (make-posn 5 5) (make-posn 6 6)))
+
+
+;make-treats-positions: [List-of Posn] -> [List-of Posn]
+;returns a list of positions of treats based on the list of stairs
+;strategy: structural decomposition
+(define (make-treats-positions stairs)
+    (cond
+      [(empty? stairs) '()]
+      [else
+       (if (zero? (random 3))
+           (cons (make-treat-position (first stairs))
+                 (make-treats-positions (rest stairs)))
+           (make-treats-positions (rest stairs)))]))
+
+;make-treats: [List-of Posn] -> [List-of Treat]
+;return a list of treat
+(define (make-treats l)
+  (cond
+    [(empty? l) '()]
+    [else
+     (cons (make-treat (list-ref COLORS (random 5 )) (first l))
+           (make-treats (rest l)))]))
+
+;make-treat-image: Treat -> Imgae
+;return a image
+(define (make-treat-image tt)
+  (circle 5 "solid" (treat-color tt)))
+;tests:
+(check-expect (make-treat-image (make-treat "red" (make-posn 5 5)))
+              (circle 5 "solid" "red"))
+         
+(define LEVEL-ONE-TREATS (make-treats (make-treats-positions (trim-list LEVEL-ONE-STAIRS))))
+
+(define LEVEL-ONE (make-level LEVEL-ONE-STAIRS LEVEL-ONE-TREATS '()))
+
+
+
+;touch?: Posn Posn -> Boolean
+;returns a boolean to see if two elements touch
+; startegy: domain knowledge
+(define (star-touch-treat? s t)
+  (and (< (abs (- (posn-x s) (posn-x t))) 5)
+       (<= (posn-y s) (posn-y t))))
+;tests:
+(check-expect (star-touch-treat? (make-posn 2 2) (make-posn 2 3))
+              #t)
+(check-expect (star-touch-treat? (make-posn 2 2) (make-posn 2 1))
+              #f)
+(check-expect (star-touch-treat? (make-posn 4 2) (make-posn 2 3))
+              #t)
+
+
+;make-star-image: rstar -> image
+;returns a star image
+(define (make-star-image r)
+  (star 10 "solid" (rstar-color r)))
+;tests:
+(check-expect (make-star-image (make-rstar (make-posn 4 2) "gray" "left"))
+              (star 10 "solid" "gray"))
+
+(check-expect (make-star-image (make-rstar (make-posn 4 2) "yellow" "left"))
+              (star 10 "solid" "yellow"))
+
+(check-expect (make-star-image (make-rstar (make-posn 4 2) "red" "left"))
+              (star 10 "solid" "red"))
+
+;update-treat-list: sw -> [List-of Treat]
+;returns a new list of treats
+(define (update-treat-list sw)
+    (cond
+      [(empty? (level-treats (first (sw-levels sw)))) '()]
+      [else (if (star-touch-treat? (rstar-posn (sw-rstar sw))
+                                   (treat-posn (first (level-treats (first (sw-levels sw))))))
+                (rest (level-treats (first (sw-levels sw))))
+                (cons (first (level-treats (first (sw-levels sw))))
+                      (update-treat-list (make-sw (sw-rstar sw)
+                                            (sw-score sw)
+                                            (cons (make-level (level-stairs (first (sw-levels sw)))
+                                                              (rest (level-treats (first (sw-levels sw))))
+                                                              (level-monsters (first (sw-levels sw))))
+                                                  (rest (sw-levels sw)))))))]))
+;tests:
+(check-expect (update-treat-list (make-sw (make-rstar (make-posn 2 2) "Oliver" "left")
+                                          0
+                                          (list (make-level '()
+                                                            (list (make-treat "gold" (make-posn 2 1))
+                                                                  (make-treat "gold" (make-posn 2 3)))
+                                                            '())
+                                                '())))
+              (list (make-treat "gold" (make-posn 2 1))))
+                                                           
+
+(check-expect (update-treat-list (make-sw (make-rstar (make-posn 2 2) "Oliver" "left")
+                                          0
+                                          (list (make-level '()
+                                                            (list (make-treat "gold" (make-posn 2 1))
+                                                                  (make-treat "gold" (make-posn 2 3))
+                                                                  (make-treat "gold" (make-posn 10 10)))
+                                                            '())
+                                                '())))
+               (list (make-treat "gold" (make-posn 2 1))
+                     (make-treat "gold" (make-posn 10 10))))
+;end-level: SW -> Boolean
+;returns a boolean to ssee if its the end of the level
+(define (end-level sw)
+  (> (posn-x (rstar-posn (sw-rstar sw)))
+          (- WORLD-WIDTH 5)))
+;tests
+(check-expect (end-level STARTING-SW) #f)
+(check-expect (end-level (make-sw (make-rstar (make-posn 800 0)
+                                              "red"
+                                              "up")
+                                  0
+                                  (cons LEVEL-ONE '()))) #t)
+
+;end-world: sw -> sw
+;return an ending world
+(define (end-world sw)
+  (make-sw (make-rstar (make-posn 0 0) "red" "up")
+              (sw-score sw)
+              (sw-levels sw)))
+              
+
+;tick: SW -> SW
+(define (tick sw)
+  (if (end-game? sw)
+      (end-world sw)
+      (update-world sw)))
+
+;update-world: SW -> SW
+;update the world after tick
+(define (update-world sw)
+  (make-sw (update-star (make-sw (update-star-posn sw)
+                                 (sw-score sw)
+                                 (sw-levels sw)))
+           (sw-score sw)
+           (update-levels sw)))
+;tests:
+
+
+;update-levels: SW -> [List-Of Level]
+;update the list of level of the world
+(define (update-levels sw)
+  (if
+    (end-level sw)
+    (rest (sw-levels sw))
+    (cons (make-level (level-stairs (first (sw-levels sw)))
+                      (update-treat-list sw)
+                      (level-monsters (first (sw-levels sw))))
+          (rest (sw-levels sw)))))
+;tests:
+(check-expect (update-levels STARTING-SW)
+              (cons LEVEL-ONE '()))
+(check-expect (update-levels (make-sw (make-rstar (make-posn 800 0) "red" "up")
+                                      0
+                                      (cons LEVEL-ONE '())))
+              '())
+
+
+;distance-to-treat: sw -> Num
+;returns a distance to the treat above
+(define (distance-to-treat sw)
+  (cond
+    [(equal? (level-treats (first (sw-levels sw))) '()) 0]
+    [else
+     (if (< (abs (- (posn-x (rstar-posn (sw-rstar sw)))
+                    (posn-x (treat-posn (first (level-treats (first (sw-levels sw)))))))))
+         (abs (- (posn-y (rstar-posn (sw-rstar sw)))
+                 (posn-y (treat-posn (first (level-treats (first (sw-levels sw))))))))
+         (distance-to-treat (make-sw (sw-rstar sw)
+                                     (sw-score sw)
+                                     (cons (make-level (level-stairs (first (sw-levels sw)))
+                                                       (rest (level-treats (first (sw-levels sw))))
+                                                       (level-monsters (first (sw-levels sw))))
+                                           (rest (sw-levels sw))))))]))
+;test:
+(check-expect (distance-to-treat (make-sw (make-rstar (make-posn 20 20)
+                                                      "red" "up")
+                                          0
+                                          (list (make-level (list (make-posn 50 50))
+                                                            (list (make-treat "red" (make-posn 20 50)))
+                                                            '()))))
+              30)
+
+;disatance-to-stair: sw -> Num
+;returns a distance-to-star
+(define (distance-to-stair sw)
+  (cond
+    [(equal? (find-which-stair sw) (make-posn 0 0)) 0]
+    [else (abs (- (posn-y (rstar-posn (sw-rstar sw)))
+                  (posn-y (find-which-stair sw))))]))
+;test:
+
+
+;update-satr: sw -> rstar
+;returns a star
+(define (update-star sw)
+  (cond
+    [(equal?  (level-treats (first (sw-levels sw))) '()) (sw-rstar sw)]
+    [(and (star-touch-treat? (rstar-posn (sw-rstar sw))
+                             (treat-posn (first (level-treats (first (sw-levels sw))))))
+          (equal? (rstar-color (sw-rstar sw))
+                  (treat-color (first (level-treats (first (sw-levels sw)))))))
+     (make-rstar (make-posn 0 0)
+                         "red" "up")]
+    [else (if (star-touch-treat? (rstar-posn (sw-rstar sw))
+                                 (treat-posn (first (level-treats (first (sw-levels sw))))))
+              (make-rstar (rstar-posn (sw-rstar sw))
+                          (treat-color (first (level-treats (first (sw-levels sw)))))
+                          (rstar-direction (sw-rstar sw)))
+              (update-star (make-sw (sw-rstar sw)
+                                    (sw-score sw)
+                                    (cons (make-level (level-stairs (first (sw-levels sw)))
+                                                      (rest (level-treats (first (sw-levels sw))))
+                                                      (level-monsters (first (sw-levels sw))))
+                                          (rest (sw-levels sw))))))]))
+;test:
+(check-expect (update-star (make-sw (make-rstar (make-posn 20 20)
+                                                "red"
+                                                "right")
+                                    0                                    
+                                    (list (make-level (list 20 20)
+                                                      (list
+                                                       (make-treat "red" (make-posn 200 100))
+                                                       (make-treat "yellow" (make-posn 20 20)))
+                                                      '()))))
+              (make-rstar (make-posn 20 20)
+                          "yellow"
+                          "right"))
+(check-expect (update-star (make-sw (make-rstar (make-posn 20 20)
+                                                "red"
+                                                "right")
+                                    0                                    
+                                    (list (make-level (list 20 20)
+                                                      (list
+                                                       (make-treat "red" (make-posn 20 20))
+                                                       (make-treat "yellow" (make-posn 200 20)))
+                                                      '()))))
+              (make-rstar (make-posn 0 0)
+                          "red"
+                          "up"))
+                                       
+                                                      
+;flat-stair? sw -> bool
+;return if the stair in the next if flat
+(define (flat-stair? sw)
+  (equal? (posn-y (find-which-stair sw))
+          (posn-y (get-next-potential-stair sw))))
+
+
+;update-star-posn: sw -> rstar
+;return a new star
+(define (update-star-posn sw)
+  (cond
+    [(equal? (rstar-direction (sw-rstar sw)) "up")
+     (make-rstar (make-posn (+ (posn-x (rstar-posn (sw-rstar sw))) 3)
+                            (- (posn-y (rstar-posn (sw-rstar sw))) 10))
+                 (rstar-color (sw-rstar sw))
+                 "right")]
+    [(equal? (rstar-direction (sw-rstar sw)) "upup")
+     (make-rstar (make-posn (posn-x (rstar-posn (sw-rstar sw)))
+                            (- (posn-y (rstar-posn (sw-rstar sw))) (distance-to-treat sw)))
+                 (rstar-color (sw-rstar sw))
+                 "falling")]
+    [(equal? (rstar-direction (sw-rstar sw)) "falling")
+     (make-rstar (make-posn (posn-x (rstar-posn (sw-rstar sw)))
+                            (+ (posn-y (rstar-posn (sw-rstar sw))) (distance-to-stair sw)))
+                 (rstar-color (sw-rstar sw))
+                 "right")]
+    [(equal? (rstar-direction (sw-rstar sw)) "down")
+     (make-rstar (make-posn (+ (posn-x (rstar-posn (sw-rstar sw))) 3)
+                            (+ (posn-y (rstar-posn (sw-rstar sw))) 10))
+                 (rstar-color (sw-rstar sw))
+                 "right")]
+    [(equal? (rstar-direction (sw-rstar sw)) "left")
+     (make-rstar (make-posn (- (posn-x (rstar-posn (sw-rstar sw))) 1)
+                            (posn-y (rstar-posn (sw-rstar sw))))
+                 (rstar-color (sw-rstar sw))
+                 (rstar-direction (sw-rstar sw)))]
+    [(equal? (rstar-direction (sw-rstar sw)) "right")
+     (if (and (equal? (posn-x (rstar-posn (sw-rstar sw)))
+                 (+ 10 (posn-x (find-which-stair sw))))
+              (equal? (flat-stair? sw) #f))
+         (sw-rstar sw)
+         (make-rstar (make-posn (+ (posn-x (rstar-posn (sw-rstar sw))) 1)
+                                (posn-y (rstar-posn (sw-rstar sw))))
+                     (rstar-color (sw-rstar sw))
+                     (rstar-direction (sw-rstar sw))))]))
+;test
+(check-expect (update-star-posn (make-sw (make-rstar (make-posn 20 30) "red" "up")
+                                         0
+                                         (list LEVEL-ONE)))
+              (make-rstar (make-posn 23 20) "red" "right"))
+(check-expect (update-star-posn (make-sw (make-rstar (make-posn 20 30) "red" "down")
+                                         0
+                                         (list LEVEL-ONE)))
+              (make-rstar (make-posn 23 40) "red" "right"))
+(check-expect (update-star-posn (make-sw (make-rstar (make-posn 20 20) "red" "left")
+                                         0
+                                         (list LEVEL-ONE)))
+              (make-rstar (make-posn 19 20) "red" "left"))
+(check-expect (update-star-posn (make-sw (make-rstar (make-posn 20 21) "red" "right")
+                                         0
+                                         (list LEVEL-ONE)))
+              (make-rstar (make-posn 21 21) "red" "right"))
+           
+;get-next-potential-stair: sw -> posn
+;return the next potential stair
+(define (get-next-potential-stair sw)
+  (find-which-stair (make-sw (make-rstar (make-posn (+ 8 (posn-x (rstar-posn (sw-rstar sw))))
+                                                    (posn-y (rstar-posn (sw-rstar sw))))
+                                         (rstar-color (sw-rstar sw))
+                                         (rstar-direction (sw-rstar sw)))
+                             (sw-score sw)
+                             (sw-levels sw))))
+;test:
+(check-expect (get-next-potential-stair (make-sw (make-rstar (make-posn 39 140) "red" "right")
+                                                 0
+                                                 (sw-levels STARTING-SW)))
+              (make-posn 40 130))
+              
+
+;going-down?: sw -> bool
+;retuns a bool to see if the stair is about going down
+(define (going-down? sw)
+  (if (< (posn-y (rstar-posn (sw-rstar sw)))
+         (posn-y (get-next-potential-stair sw)))
+      #t
+      #f))
+  
+;key: SW Key-event -> SW
+;Builds a key event to control the paddle
+;Strategy: function composition
+(define (key sw a-key)
+  (cond
+    [(key=? a-key "up")(make-sw (make-rstar (rstar-posn (sw-rstar sw))
+                                            (rstar-color (sw-rstar sw))
+                                            "upup")
+                                   (sw-score sw)
+                                   (sw-levels sw))]
+    [(key=? a-key " ")
+     (if (going-down? sw)
+         (make-sw (make-rstar (rstar-posn (sw-rstar sw))
+                                            (rstar-color (sw-rstar sw))
+                                            "down")
+                  (sw-score sw)
+                  (sw-levels sw))  
+         (make-sw (make-rstar (rstar-posn (sw-rstar sw))
+                                            (rstar-color (sw-rstar sw))
+                                            "up")
+                  (sw-score sw)
+                  (sw-levels sw)))]
+    [(key=? a-key "left") (make-sw (make-rstar (rstar-posn (sw-rstar sw))
+                                            (rstar-color (sw-rstar sw))
+                                            "left")
+                                   (sw-score sw)
+                                   (sw-levels sw))]
+    [(key=? a-key "right") (make-sw (make-rstar (rstar-posn (sw-rstar sw))
+                                            (rstar-color (sw-rstar sw))
+                                            "right")
+                                    (sw-score sw)
+                                    (sw-levels sw))]))
+;tests
+(check-expect (key (make-sw (make-rstar (make-posn 2 2) "Oliver" "left")
+                                        0
+                                        (list LEVEL-ONE))
+                   " ")
+              (make-sw (make-rstar (make-posn 2 2) "Oliver" "down")
+                                        0
+                                        (list LEVEL-ONE)))
+              
+(check-expect (key (make-sw (make-rstar (make-posn 2 2) "Oliver" "up")
+                                        0
+                                        (list LEVEL-ONE))
+                   "left")
+              (make-sw (make-rstar (make-posn 2 2) "Oliver" "left")
+                                        0
+                                         (list LEVEL-ONE)))
+(check-expect (key (make-sw (make-rstar (make-posn 2 2) "Oliver" "up")
+                                        0
+                                        (list LEVEL-ONE))
+                   " ")
+              (make-sw (make-rstar (make-posn 2 2) "Oliver" "down")
+                                        0
+                                         (list LEVEL-ONE)))
+
+;place-image/posn: Image Point Image -> Imgae
+;returns a image with a image on it in certain point
+(define (place-image/posn im posn bg)
+  (place-image im (posn-x posn) (posn-y posn) bg))
+;tests:
+(check-expect (place-image/posn STAIR-IMAGE (make-posn 50 50) BACKGROUND)
+              (place-image STAIR-IMAGE 50 50 BACKGROUND))
+
+
+;draw-staris: SW -> Imgae
+;returns a image with all the stairs
+(define (draw-stairs sw)
+  (local
+    [(define ST
+       (level-stairs (first (sw-levels sw))))]
+    (cond
+      [(empty? ST) BACKGROUND]
+      [else (if (equal? (make-posn 0 0)
+                        (rstar-posn (sw-rstar sw)))
+                (place-image (text "GAME OVER!!!" 80 "red") 400 100 BACKGROUND)
+                (place-image/posn STAIR-IMAGE (first ST)
+                              (draw-stairs (make-sw
+                                            (sw-rstar sw)
+                                            (sw-score sw)
+                                            (cons (make-level (rest ST) (level-treats (first (sw-levels sw)))
+                                                              (level-monsters (first (sw-levels sw))))
+                                                  (rest (sw-levels sw)))))))])))
+
+;draw-treats: SW -> Imgae
+;returns a imgae with all the treats
+(define (draw-treats-stairs sw)
+  (local
+    [(define TT
+       (level-treats (first (sw-levels sw))))]
+    (cond
+      [(empty? TT) (draw-stairs sw)]
+      [else (place-image/posn (make-treat-image (first TT))
+                              (treat-posn (first TT))
+                              (draw-treats-stairs (make-sw
+                                                   (sw-rstar sw)
+                                                   (sw-score sw)
+                                                   (cons (make-level (level-stairs (first (sw-levels sw)))
+                                                                     (rest TT)
+                                                                     (level-monsters (first (sw-levels sw))))
+                                                         (rest (sw-levels sw))))))])))
+
+;draw-rstar: SW -> Image
+;returns a image
+(define (draw-rstar sw)
+  (place-image/posn (make-star-image (sw-rstar sw))
+                    (rstar-posn (sw-rstar sw))
+                    (draw-treats-stairs sw)))
+
+  
+; draw: Faller-World -> Image
+; Draws the score on the top of the scene
+; Strategy: Function Composition
+(define (draw sw)
+  (place-image 
+   (text (number->string (update-score sw)) 15 "olive")
+   15 15
+   (draw-rstar sw)))
+;update-score: SW -> Num
+;returns the updated score
+(define (update-score sw)
+  (local
+    [(define CT
+       (length (level-treats (first (update-levels sw)))))]
+    (+ (sw-score sw) (* (- (length LEVEL-ONE-TREATS) CT) 10))))
+
+
+
+(define STARTING-SW (make-sw (make-rstar (make-posn 20 140)
+                                          "black" "right")
+                              0
+                              (cons LEVEL-ONE '())))
+;start: Any -> SW
+;Starts the star sunning game
+;example:
+(define (start _dummy)
+  (big-bang STARTING-SW
+    [on-tick tick (/ 1 10)]
+    [on-key key]
+    [to-draw draw]))
+
+(start 0)
+;
+;;update-normal-monster: Star Monster -> Monster
+;;returns a monster with the newest info
+;;interp: call the touch? to see if the star touchs the monster
+;;        check the monster type and it only works for normal monster
+;;        check if the color of the star is orange
+;;        if the color is orange and the touch? return true, monster life reduce to zero.
+;;strategy: functional composition
+;(define (update-normal-monster star monster))
+;
+;;update-super-monster: Star Monster -> Monster
+;;returns a monster wth the newest info
+;;interp: call the touch? to see if the star touchs the monster
+;;        check the monster type
+;;        check if the score is over 1000
+;;        and if all true abover, each touch will reduce two points out of 100 from monster's life.
+;;strategy: functional composition
+;(define (update-super-monster star monster))
+;
+;
+;;update-monsters: List-of-Monster Star -> List-of-Monster
+;;returns a list of the monsters after deleting the eaten ones
+;;interp: call the update-normal-monster and if the life is zero we delete the monster
+;;strategy: functional composition
+;(define (update-monsters monsters star))
